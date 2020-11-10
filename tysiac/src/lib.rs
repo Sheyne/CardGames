@@ -31,7 +31,7 @@ impl States {
         States::BiddingA(BiddingA::random(rng))
     }
 
-    fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
+    pub fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
         States::BiddingA(BiddingA::deal(deck))
     }
 }
@@ -49,7 +49,7 @@ impl BiddingA {
         Self::deal(&mut deck)
     }
 
-    fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
+    pub fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
         Self {
             hands: Piles::deal(deck),
             prikup: [
@@ -58,34 +58,6 @@ impl BiddingA {
                 deck.next().unwrap(),
             ],
         }
-    }
-
-    fn new(
-        a: Vec<Card>,
-        b: Vec<Card>,
-        c: Vec<Card>,
-        mut prikup: Vec<Card>,
-    ) -> Result<Self, String> {
-        if a.len() != 7 {
-            return Err("Hand a is not the right length".to_owned());
-        }
-
-        if b.len() != 7 {
-            return Err("Hand b is not the right length".to_owned());
-        }
-
-        if c.len() != 7 {
-            return Err("Hand c is not the right length".to_owned());
-        }
-
-        if prikup.len() != 3 {
-            return Err("Prikup is not the right length".to_owned());
-        }
-
-        Ok(Self {
-            hands: Piles::new(a, b, c),
-            prikup: [prikup.remove(0), prikup.remove(0), prikup.remove(0)],
-        })
     }
 }
 
@@ -186,6 +158,17 @@ impl Rank {
     }
 }
 
+#[macro_export]
+macro_rules! pile {
+    () => (
+        $crate::Pile(vec![])
+    );
+
+    ($($x:expr),+ $(,)?) => (
+        Pile(vec![ $($x),+ ])
+    );
+}
+
 #[derive(Debug, PartialEq, Eq, Default)]
 struct Pile(Vec<Card>);
 
@@ -229,12 +212,24 @@ impl Extend<Card> for Pile {
 }
 
 impl Pile {
-    fn deal(deck: &mut impl Iterator<Item = Card>, count: usize) -> Pile {
-        Pile(deck.take(count).collect())
+    fn drain(&mut self) -> std::vec::Drain<'_, Card> {
+        self.0.drain(..)
     }
 
-    fn new(cards: Vec<Card>) -> Pile {
-        Pile(cards)
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn get(&self, index: usize) -> Option<&Card> {
+        if index < self.0.len() {
+            Some(&self.0[index])
+        } else {
+            None
+        }
+    }
+
+    fn deal(deck: &mut impl Iterator<Item = Card>, count: usize) -> Pile {
+        Pile(deck.take(count).collect())
     }
 
     fn contains(&self, card: card_games_lib::Card) -> bool {
@@ -251,10 +246,6 @@ impl Pile {
         self.0.push(card)
     }
 
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
     fn iter(&self) -> impl Iterator<Item = &Card> {
         self.0.iter()
     }
@@ -263,10 +254,6 @@ impl Pile {
 impl Piles {
     fn empty() -> Piles {
         Piles([Pile::default(), Pile::default(), Pile::default()])
-    }
-
-    fn new(a: Vec<Card>, b: Vec<Card>, c: Vec<Card>) -> Self {
-        Self([Pile::new(a), Pile::new(b), Pile::new(c)])
     }
 
     fn deal(deck: &mut impl Iterator<Item = Card>) -> Piles {
@@ -377,7 +364,7 @@ game_states! {
             bid_winner: this.bid_winner,
             hands: hands,
             trump: None,
-            play_area: vec![],
+            play_area: pile![],
             next_player: this.bid_winner,
             pending_points: [0,0,0],
             taken: Piles::empty(),
@@ -390,19 +377,20 @@ game_states! {
         taken: Piles,
         next_player: Player,
         trump: Option<Suit>,
-        play_area: Vec<Card>,
+        play_area: Pile,
         pending_points: [usize; 3],
         bid: usize
     } (player: Player, card: card_games_lib::Card) -> ( Finished, String ) |mut this, _context, player, card| {
-        let initial_card = &this.play_area[0];
-        if initial_card.suit() != card.suit() {
-            let players_hand = this.hands.hand(&player);
+        if let Some(initial_card) = this.play_area.get(0) {
+            if initial_card.suit() != card.suit() {
+                let players_hand = this.hands.hand(&player);
 
-            let any_cards_match_suit = players_hand.iter().filter(|c| c != &&card).any(|c| c.suit() == initial_card.suit());
+                let any_cards_match_suit = players_hand.iter().filter(|c| c != &&card).any(|c| c.suit() == initial_card.suit());
 
-            if any_cards_match_suit {
-                let message = format!("Cannot play card of {:?} when have {:?} in hand", card.suit(), initial_card.suit());
-                return StepResult::fail(this, message)
+                if any_cards_match_suit {
+                    let message = format!("Cannot play card of {:?} when have {:?} in hand", card.suit(), initial_card.suit());
+                    return StepResult::fail(this, message)
+                }
             }
         }
 
@@ -420,10 +408,10 @@ game_states! {
                 }
             }
 
-            play_area.push(played_card);
+            play_area.add(played_card);
 
             if play_area.len() == 3 {
-                let lead_suit = play_area[0].suit();
+                let lead_suit = play_area.get(0).expect("There is at least 1 card").suit();
 
                 let winning_card = trump.iter()
                                         .flat_map(|trump| play_area.iter().filter(move |c| c.suit() == trump))
@@ -440,7 +428,7 @@ game_states! {
 
                 next_player = winner;
 
-                this.taken.hand_mut(&winner).extend(play_area.drain(..));
+                this.taken.hand_mut(&winner).extend(play_area.drain());
             }
 
             StepResult::stay(Playing {
@@ -478,8 +466,8 @@ mod tests {
     }
 
     fn test_hands_1() -> Piles {
-        Piles::new(
-            vec![
+        Piles([
+            pile![
                 Card(Ace, Hearts),
                 Card(Ten, Hearts),
                 Card(King, Hearts),
@@ -488,7 +476,7 @@ mod tests {
                 Card(Nine, Hearts),
                 Card(Ace, Clubs),
             ],
-            vec![
+            pile![
                 Card(Ace, Diamonds),
                 Card(Ten, Diamonds),
                 Card(King, Diamonds),
@@ -497,7 +485,7 @@ mod tests {
                 Card(Nine, Diamonds),
                 Card(Ten, Clubs),
             ],
-            vec![
+            pile![
                 Card(Ace, Spades),
                 Card(Ten, Spades),
                 Card(King, Spades),
@@ -506,6 +494,7 @@ mod tests {
                 Card(Nine, Spades),
                 Card(King, Clubs),
             ],
+        ]
         )
     }
 
@@ -531,7 +520,7 @@ mod tests {
         assert_eq!(state.bid_winner, Player::C);
         assert_eq!(
             state.hands.hand(&Player::C),
-            &Pile::new(vec![
+            &Pile(vec![
                 Card(Ace, Spades),
                 Card(Ten, Spades),
                 Card(King, Spades),
@@ -544,8 +533,8 @@ mod tests {
                 Card(Nine, Clubs),
             ])
         );
-        assert_eq!(state.hands.hand(&Player::A).len(), 7);
-        assert_eq!(state.hands.hand(&Player::B).len(), 7);
+        assert_eq!(state.hands.hand(&Player::A).iter().count(), 7);
+        assert_eq!(state.hands.hand(&Player::B).iter().count(), 7);
 
         let state: Distrubuting = state.step(&mut game, 10).next()?;
 
@@ -560,7 +549,7 @@ mod tests {
 
         assert_eq!(
             state.hands.hand(&Player::C),
-            &Pile::new(vec![
+            &pile![
                 Card(Ace, Spades),
                 Card(Ten, Spades),
                 Card(Queen, Spades),
@@ -568,12 +557,12 @@ mod tests {
                 Card(King, Clubs),
                 Card(Queen, Clubs),
                 Card(Jack, Clubs),
-                Card(Nine, Clubs),
-            ])
+                Card(Nine, Clubs)
+            ]
         );
         assert_eq!(
             state.hands.hand(&Player::A),
-            &Pile::new(vec![
+            &pile![
                 Card(Ace, Hearts),
                 Card(Ten, Hearts),
                 Card(King, Hearts),
@@ -582,11 +571,11 @@ mod tests {
                 Card(Nine, Hearts),
                 Card(Ace, Clubs),
                 Card(Jack, Spades),
-            ])
+            ]
         );
         assert_eq!(
             state.hands.hand(&Player::B),
-            &Pile::new(vec![
+            &pile![
                 Card(Ace, Diamonds),
                 Card(Ten, Diamonds),
                 Card(King, Diamonds),
@@ -595,7 +584,7 @@ mod tests {
                 Card(Nine, Diamonds),
                 Card(Ten, Clubs),
                 Card(King, Spades),
-            ])
+            ]
         );
 
         Ok(())

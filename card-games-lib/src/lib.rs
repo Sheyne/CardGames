@@ -107,10 +107,10 @@ impl<ThisState, NextState, E> StepResult<ThisState, NextState, E> {
 #[macro_export]
 macro_rules! game_states {
     { $( $state:ident
-         { $( $field:ident : $type:ty),* }
-         ($( $arg:ident : $arg_type:ty),*) -> ( $next_state:ty , $error:ty )
+         { $( $field:ident : $type:ty),* $(,)? }
+         ( $( $arg:ident : $arg_type:ty),* $(,)? ) -> ( $next_state:ty , $error:ty $(,)? )
          $body:expr
-        ),+ } => {
+        ),+ $(,)? } => {
         $(
             pub struct $state {
                 $( $field : $type ), *
