@@ -274,184 +274,187 @@ impl Piles {
 }
 
 game_states! {
-    BiddingA {
-        hands: Piles,
-        prikup: [Card; 3]
-    } (bid: usize) -> ( BiddingB, String ) |this, _context, bid| {
-        StepResult::cont(BiddingB {
-            hands: this.hands,
-            prikup: this.prikup,
-            bids: [bid],
-        })
-    },
-    BiddingB {
-        hands: Piles,
-        prikup: [Card; 3],
-        bids: [usize; 1]
-    } (bid: usize) -> ( BiddingC, String ) |this, _context, bid| {
-        StepResult::cont(BiddingC {
-            hands: this.hands,
-            prikup: this.prikup,
-            bids: [this.bids[0], bid],
-        })
-    },
-    BiddingC {
-        hands: Piles,
-        prikup: [Card; 3],
-        bids: [usize; 2]
-    } (bid: usize) -> ( AdjustingBid , String ) |this, _context, bid| {
-        let bids = [this.bids[0], this.bids[1], bid];
-
-        let (highest_bidder, winning_bid) = bids
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, val)| *val)
-            .expect("We know there's at least one element");
-        let highest_bidder = Player::from_index(highest_bidder).expect("Index is valid by construction");
-
-        let mut hands = this.hands;
-
-        let [pick_1, pick_2, pick_3] = this.prikup;
-
-        let highest_bidders_hand = hands.hand_mut(&highest_bidder);
-        highest_bidders_hand.add(pick_1);
-        highest_bidders_hand.add(pick_2);
-        highest_bidders_hand.add(pick_3);
-
-        StepResult::cont(AdjustingBid {
-            bid_winner: highest_bidder,
-            bid: *winning_bid,
-            hands: hands,
-        })
-    },
-    AdjustingBid {
-        bid_winner: Player,
-        bid: usize,
-        hands: Piles
-    } (increase: usize) -> ( Distrubuting , String ) |this, _context, increase| {
-        if let Some(new_bid) = this.bid.checked_add(increase) {
-            StepResult::cont(Distrubuting {
-                bid_winner: this.bid_winner,
+    context: Game,
+    states: {
+        BiddingA {
+            hands: Piles,
+            prikup: [Card; 3]
+        } (bid: usize) -> ( BiddingB, String ) |this, _context, bid| {
+            StepResult::cont(BiddingB {
                 hands: this.hands,
-                bid: new_bid,
+                prikup: this.prikup,
+                bids: [bid],
             })
-        } else {
-            StepResult::fail(this, "Bid increase is too high".to_owned())
-        }
-    },
-    Distrubuting {
-        bid_winner: Player,
-        hands: Piles,
-        bid: usize
-    } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |this, _context, card_for_next, card_for_prev| {
-        if !this.hands.hand(&this.bid_winner).contains(card_for_next)
-        || !this.hands.hand(&this.bid_winner).contains(card_for_prev) {
-            return StepResult::fail(this, "Trying to pass a card you don't have".to_owned())
-        }
-        let mut hands = this.hands;
-        let bid_winners_hand = hands.hand_mut(&this.bid_winner);
-
-        let card_for_next = bid_winners_hand.remove(card_for_next).expect("We checked posession already");
-        let card_for_prev = bid_winners_hand.remove(card_for_prev).expect("We checked posession already");
-
-        let next_player = this.bid_winner.next();
-        hands.hand_mut(&next_player).add(card_for_next);
-
-        let next_player = next_player.next();
-        hands.hand_mut(&next_player).add(card_for_prev);
-
-        StepResult::cont(Playing {
-            bid_winner: this.bid_winner,
-            hands: hands,
-            trump: None,
-            play_area: pile![],
-            next_player: this.bid_winner,
-            pending_points: [0,0,0],
-            taken: Piles::empty(),
-            bid: this.bid,
-        })
-    },
-    Playing {
-        bid_winner: Player,
-        hands: Piles,
-        taken: Piles,
-        next_player: Player,
-        trump: Option<Suit>,
-        play_area: Pile,
-        pending_points: [usize; 3],
-        bid: usize
-    } (player: Player, card: card_games_lib::Card) -> ( Finished, String ) |mut this, _context, player, card| {
-        if let Some(initial_card) = this.play_area.get(0) {
-            if initial_card.suit() != card.suit() {
-                let players_hand = this.hands.hand(&player);
-
-                let any_cards_match_suit = players_hand.iter().filter(|c| c != &&card).any(|c| c.suit() == initial_card.suit());
-
-                if any_cards_match_suit {
-                    let message = format!("Cannot play card of {:?} when have {:?} in hand", card.suit(), initial_card.suit());
-                    return StepResult::fail(this, message)
-                }
-            }
-        }
-
-        if let Some(played_card) = this.hands.hand_mut(&player).remove(card) {
-            let mut play_area = this.play_area;
-            let mut next_player = this.next_player.next();
-            let mut trump = this.trump;
-            let mut pending_points = this.pending_points;
-
-            if play_area.len() == 0 && played_card.rank().is_weddable() {
-                let has_marriage = this.hands.hand(&player).iter().any(|c| c.suit() == played_card.suit() && c.rank().is_weddable());
-                if has_marriage {
-                    trump = Some(played_card.suit().clone());
-                    pending_points[player.index()] += played_card.suit().marriage_value();
-                }
-            }
-
-            play_area.add(played_card);
-
-            if play_area.len() == 3 {
-                let lead_suit = play_area.get(0).expect("There is at least 1 card").suit();
-
-                let winning_card = trump.iter()
-                                        .flat_map(|trump| play_area.iter().filter(move |c| c.suit() == trump))
-                                        .max_by_key(|c|c.rank())
-                                        .or_else(|| play_area.iter().filter(move |c| c.suit() == lead_suit).max_by_key(|c|c.rank()))
-                                        .expect("There will be a highest card of lead suit");
-
-
-                let winner = play_area.iter().zip(InfinitePlayerIter(next_player))
-                                             .filter(|(card, _)| card == &winning_card)
-                                             .map(|(_, player)| player)
-                                             .next()
-                                             .expect("Some card won");
-
-                next_player = winner;
-
-                this.taken.hand_mut(&winner).extend(play_area.drain());
-            }
-
-            StepResult::stay(Playing {
-                bid_winner: this.bid_winner,
+        },
+        BiddingB {
+            hands: Piles,
+            prikup: [Card; 3],
+            bids: [usize; 1]
+        } (bid: usize) -> ( BiddingC, String ) |this, _context, bid| {
+            StepResult::cont(BiddingC {
                 hands: this.hands,
-                trump: trump,
-                pending_points: pending_points,
-                next_player: next_player,
-                play_area: play_area,
-                taken: this.taken,
+                prikup: this.prikup,
+                bids: [this.bids[0], bid],
+            })
+        },
+        BiddingC {
+            hands: Piles,
+            prikup: [Card; 3],
+            bids: [usize; 2]
+        } (bid: usize) -> ( AdjustingBid , String ) |this, _context, bid| {
+            let bids = [this.bids[0], this.bids[1], bid];
+
+            let (highest_bidder, winning_bid) = bids
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, val)| *val)
+                .expect("We know there's at least one element");
+            let highest_bidder = Player::from_index(highest_bidder).expect("Index is valid by construction");
+
+            let mut hands = this.hands;
+
+            let [pick_1, pick_2, pick_3] = this.prikup;
+
+            let highest_bidders_hand = hands.hand_mut(&highest_bidder);
+            highest_bidders_hand.add(pick_1);
+            highest_bidders_hand.add(pick_2);
+            highest_bidders_hand.add(pick_3);
+
+            StepResult::cont(AdjustingBid {
+                bid_winner: highest_bidder,
+                bid: *winning_bid,
+                hands: hands,
+            })
+        },
+        AdjustingBid {
+            bid_winner: Player,
+            bid: usize,
+            hands: Piles
+        } (increase: usize) -> ( Distrubuting , String ) |this, _context, increase| {
+            if let Some(new_bid) = this.bid.checked_add(increase) {
+                StepResult::cont(Distrubuting {
+                    bid_winner: this.bid_winner,
+                    hands: this.hands,
+                    bid: new_bid,
+                })
+            } else {
+                StepResult::fail(this, "Bid increase is too high".to_owned())
+            }
+        },
+        Distrubuting {
+            bid_winner: Player,
+            hands: Piles,
+            bid: usize
+        } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |this, _context, card_for_next, card_for_prev| {
+            if !this.hands.hand(&this.bid_winner).contains(card_for_next)
+            || !this.hands.hand(&this.bid_winner).contains(card_for_prev) {
+                return StepResult::fail(this, "Trying to pass a card you don't have".to_owned())
+            }
+            let mut hands = this.hands;
+            let bid_winners_hand = hands.hand_mut(&this.bid_winner);
+
+            let card_for_next = bid_winners_hand.remove(card_for_next).expect("We checked posession already");
+            let card_for_prev = bid_winners_hand.remove(card_for_prev).expect("We checked posession already");
+
+            let next_player = this.bid_winner.next();
+            hands.hand_mut(&next_player).add(card_for_next);
+
+            let next_player = next_player.next();
+            hands.hand_mut(&next_player).add(card_for_prev);
+
+            StepResult::cont(Playing {
+                bid_winner: this.bid_winner,
+                hands: hands,
+                trump: None,
+                play_area: pile![],
+                next_player: this.bid_winner,
+                pending_points: [0,0,0],
+                taken: Piles::empty(),
                 bid: this.bid,
             })
-        } else {
-            StepResult::fail(this, format!("{:?} is not in hand", card))
+        },
+        Playing {
+            bid_winner: Player,
+            hands: Piles,
+            taken: Piles,
+            next_player: Player,
+            trump: Option<Suit>,
+            play_area: Pile,
+            pending_points: [usize; 3],
+            bid: usize
+        } (player: Player, card: card_games_lib::Card) -> ( Finished, String ) |mut this, _context, player, card| {
+            if let Some(initial_card) = this.play_area.get(0) {
+                if initial_card.suit() != card.suit() {
+                    let players_hand = this.hands.hand(&player);
+
+                    let any_cards_match_suit = players_hand.iter().filter(|c| c != &&card).any(|c| c.suit() == initial_card.suit());
+
+                    if any_cards_match_suit {
+                        let message = format!("Cannot play card of {:?} when have {:?} in hand", card.suit(), initial_card.suit());
+                        return StepResult::fail(this, message)
+                    }
+                }
+            }
+
+            if let Some(played_card) = this.hands.hand_mut(&player).remove(card) {
+                let mut play_area = this.play_area;
+                let mut next_player = this.next_player.next();
+                let mut trump = this.trump;
+                let mut pending_points = this.pending_points;
+
+                if play_area.len() == 0 && played_card.rank().is_weddable() {
+                    let has_marriage = this.hands.hand(&player).iter().any(|c| c.suit() == played_card.suit() && c.rank().is_weddable());
+                    if has_marriage {
+                        trump = Some(played_card.suit().clone());
+                        pending_points[player.index()] += played_card.suit().marriage_value();
+                    }
+                }
+
+                play_area.add(played_card);
+
+                if play_area.len() == 3 {
+                    let lead_suit = play_area.get(0).expect("There is at least 1 card").suit();
+
+                    let winning_card = trump.iter()
+                                            .flat_map(|trump| play_area.iter().filter(move |c| c.suit() == trump))
+                                            .max_by_key(|c|c.rank())
+                                            .or_else(|| play_area.iter().filter(move |c| c.suit() == lead_suit).max_by_key(|c|c.rank()))
+                                            .expect("There will be a highest card of lead suit");
+
+
+                    let winner = play_area.iter().zip(InfinitePlayerIter(next_player))
+                                                .filter(|(card, _)| card == &winning_card)
+                                                .map(|(_, player)| player)
+                                                .next()
+                                                .expect("Some card won");
+
+                    next_player = winner;
+
+                    this.taken.hand_mut(&winner).extend(play_area.drain());
+                }
+
+                StepResult::stay(Playing {
+                    bid_winner: this.bid_winner,
+                    hands: this.hands,
+                    trump: trump,
+                    pending_points: pending_points,
+                    next_player: next_player,
+                    play_area: play_area,
+                    taken: this.taken,
+                    bid: this.bid,
+                })
+            } else {
+                StepResult::fail(this, format!("{:?} is not in hand", card))
+            }
+        },
+        Finished {
+            bid_winner: Player,
+            taken: Piles,
+            pending_points: [usize; 3],
+            bid: usize
+        } () -> ( BiddingA, String ) |_this, _context| {
+            todo!()
         }
-    },
-    Finished {
-        bid_winner: Player,
-        taken: Piles,
-        pending_points: [usize; 3],
-        bid: usize
-    } () -> ( BiddingA, String ) |_this, _context| {
-        todo!()
     }
 }
 
@@ -494,8 +497,7 @@ mod tests {
                 Card(Nine, Spades),
                 Card(King, Clubs),
             ],
-        ]
-        )
+        ])
     }
 
     #[test]
