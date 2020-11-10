@@ -38,11 +38,11 @@ impl Card {
 }
 
 pub trait Step {
-    type States;
+    type SomeState;
     type Context;
     type Input;
     type ThisState;
-    type NextState: Into<Self::States>;
+    type NextState: Into<Self::SomeState>;
     type Error;
 
     fn step(
@@ -58,12 +58,9 @@ pub struct StepResult<ThisState, NextState, Error>(
 );
 
 #[derive(Debug)]
-pub enum Error<StepError, StateName> {
+pub enum Error<StepError, State> {
     StepError(StepError),
-    NotInCorrectStateError {
-        held: StateName,
-        given: StateName,
-    },
+    NotInCorrectStateError { held: State, given: State },
 }
 
 impl<ThisState, NextState, Error> From<StepResult<ThisState, NextState, Error>>
@@ -76,22 +73,22 @@ impl<ThisState, NextState, Error> From<StepResult<ThisState, NextState, Error>>
 }
 
 pub trait State {
-    type Name;
+    type Id;
 
-    fn name() -> Self::Name;
+    fn state() -> Self::Id;
 }
 
 impl<ThisState, NextState, E, N> StepResult<ThisState, NextState, E>
 where
-    ThisState: State<Name = N>,
-    NextState: State<Name = N>,
+    ThisState: State<Id = N>,
+    NextState: State<Id = N>,
 {
     pub fn this(self) -> Result<ThisState, Error<E, N>> {
         let Self(next, error) = self;
         error.map_err(|e| Error::StepError(e)).and_then(|_| {
             next.left().ok_or(Error::NotInCorrectStateError {
-                held: ThisState::name(),
-                given: NextState::name(),
+                held: ThisState::state(),
+                given: NextState::state(),
             })
         })
     }
@@ -100,8 +97,8 @@ where
         let Self(next, error) = self;
         error.map_err(|e| Error::StepError(e)).and_then(|_| {
             next.right().ok_or(Error::NotInCorrectStateError {
-                held: NextState::name(),
-                given: ThisState::name(),
+                held: NextState::state(),
+                given: ThisState::state(),
             })
         })
     }
@@ -140,21 +137,21 @@ macro_rules! game_states {
             }
 
             impl $crate::State for $state {
-                type Name = self::StateName;
+                type Id = self::State;
 
-                fn name() -> self::StateName {
-                    return self::StateName::$state;
+                fn state() -> Self::Id {
+                    return Self::Id::$state;
                 }
             }
 
-            impl From<$state> for self::States {
-                fn from(state: $state) -> self::States {
-                    self::States::$state(state)
+            impl From<$state> for self::SomeState {
+                fn from(state: $state) -> self::SomeState {
+                    self::SomeState::$state(state)
                 }
             }
 
             impl $crate::Step for $state {
-                type States = States;
+                type SomeState = SomeState;
                 type Context = $context;
                 type Input = ($( $arg_type ), * );
                 type ThisState = self::$state;
@@ -171,14 +168,14 @@ macro_rules! game_states {
         )+
 
         #[derive(Debug)]
-        pub enum Input {
+        pub enum StateInput {
             $($state ( $( $arg_type),* ) ), +
         }
 
-        impl self::Input {
-            fn name(&self) -> self::StateName {
+        impl self::StateInput {
+            pub fn state(&self) -> self::State {
                 match self {
-                    $(self::Input::$state($( $arg ),*) => self::StateName::$state ), +
+                    $(self::StateInput::$state($( $arg ),*) => self::State::$state ), +
                 }
             }
         }
@@ -188,40 +185,54 @@ macro_rules! game_states {
             $( $state($error) ), +
         }
 
+        impl self::StateError {
+            pub fn state(&self) -> self::State {
+                match self {
+                    $(self::StateError::$state(_) => self::State::$state ), +
+                }
+            }
+        }
+
         #[derive(Debug)]
-        pub enum States {
+        pub enum SomeState {
             $($state($state)), +
         }
 
         #[derive(Debug)]
-        pub enum StateName {
+        pub enum State {
             $($state), +
         }
 
-        impl States {
-            pub fn step(self, context: &mut $context, input: self::Input) -> (Self, ::core::option::Option<$crate::Error<self::StateError, self::StateName>>)
+        impl SomeState {
+            pub fn state(&self) -> self::State {
+                match self {
+                    $(self::SomeState::$state(_) => self::State::$state ), +
+                }
+            }
+
+            pub fn step(self, context: &mut $context, input: self::StateInput) -> (Self, ::core::option::Option<$crate::Error<self::StateError, self::State>>)
             {
                 match (self, input) {
-                    $((self::States::$state(state), self::Input::$state( $( $arg ), * )) => {
+                    $((self::SomeState::$state(state), self::StateInput::$state( $( $arg ), * )) => {
                         let self::StepResult(next, result) = state.step(context, ($( $arg ), *));
                         let err = result.map_err(|e| $crate::Error::StepError(self::StateError::$state(e))).err();
                         (::core::convert::Into::into(next), err)
                     }),+
-                    $((States::$state(a), input) =>{
-                        (self::States::$state(a), Some($crate::Error::NotInCorrectStateError{
-                            held: self::StateName::$state, 
-                            given: input.name()
+                    $((SomeState::$state(a), input) =>{
+                        (self::SomeState::$state(a), Some($crate::Error::NotInCorrectStateError{
+                            held: self::State::$state,
+                            given: input.state()
                         }))
                     }),+
                 }
             }
         }
 
-        impl<A, B> From<::either::Either<A, B>> for States
-        where A : Into<States>,
-            B : Into<States>
+        impl<A, B> From<::either::Either<A, B>> for SomeState
+        where A : Into<SomeState>,
+            B : Into<SomeState>
         {
-            fn from(s: ::either::Either<A, B>) -> States {
+            fn from(s: ::either::Either<A, B>) -> SomeState {
                 match s {
                     ::either::Either::Left(a) => a.into(),
                     ::either::Either::Right(b) => b.into()

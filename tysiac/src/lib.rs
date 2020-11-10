@@ -23,16 +23,16 @@ impl Iterator for InfinitePlayerIter {
     }
 }
 
-impl States {
+impl SomeState {
     pub fn random<R>(rng: &mut R) -> Self
     where
         R: Rng,
     {
-        States::BiddingA(BiddingA::random(rng))
+        SomeState::BiddingA(BiddingA::random(rng))
     }
 
     pub fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
-        States::BiddingA(BiddingA::deal(deck))
+        SomeState::BiddingA(BiddingA::deal(deck))
     }
 }
 
@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn bid_a() -> Result<(), Error<String, StateName>> {
+    fn bid_a() -> Result<(), Error<String, State>> {
         let mut game = Game;
         let state = BiddingA {
             hands: test_hands_1(),
