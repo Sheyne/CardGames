@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+    "card-games-lib",
+    "tysiac-engine",
+    "tysiac"
+]
