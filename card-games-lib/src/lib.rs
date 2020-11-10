@@ -61,7 +61,7 @@ pub struct StepResult<ThisState, NextState, Error>(
 pub enum Error<StepError, StateName> {
     StepError(StepError),
     NotInCorrectStateError {
-        expected: StateName,
+        held: StateName,
         given: StateName,
     },
 }
@@ -90,7 +90,7 @@ where
         let Self(next, error) = self;
         error.map_err(|e| Error::StepError(e)).and_then(|_| {
             next.left().ok_or(Error::NotInCorrectStateError {
-                expected: ThisState::name(),
+                held: ThisState::name(),
                 given: NextState::name(),
             })
         })
@@ -100,7 +100,7 @@ where
         let Self(next, error) = self;
         error.map_err(|e| Error::StepError(e)).and_then(|_| {
             next.right().ok_or(Error::NotInCorrectStateError {
-                expected: NextState::name(),
+                held: NextState::name(),
                 given: ThisState::name(),
             })
         })
@@ -134,6 +134,7 @@ macro_rules! game_states {
         ),+ $(,)? }
      } => {
         $(
+            #[derive(Debug)]
             pub struct $state {
                 $( $field : $type ), *
             }
@@ -169,18 +170,30 @@ macro_rules! game_states {
             }
         )+
 
+        #[derive(Debug)]
         pub enum Input {
             $($state ( $( $arg_type),* ) ), +
         }
 
+        impl self::Input {
+            fn name(&self) -> self::StateName {
+                match self {
+                    $(self::Input::$state($( $arg ),*) => self::StateName::$state ), +
+                }
+            }
+        }
+
+        #[derive(Debug)]
         pub enum StateError {
             $( $state($error) ), +
         }
 
+        #[derive(Debug)]
         pub enum States {
             $($state($state)), +
         }
 
+        #[derive(Debug)]
         pub enum StateName {
             $($state), +
         }
@@ -191,12 +204,13 @@ macro_rules! game_states {
                 match (self, input) {
                     $((self::States::$state(state), self::Input::$state( $( $arg ), * )) => {
                         let self::StepResult(next, result) = state.step(context, ($( $arg ), *));
-                        (::core::convert::Into::into(next), todo!())
+                        let err = result.map_err(|e| $crate::Error::StepError(self::StateError::$state(e))).err();
+                        (::core::convert::Into::into(next), err)
                     }),+
                     $((States::$state(a), input) =>{
                         (self::States::$state(a), Some($crate::Error::NotInCorrectStateError{
-                            expected: self::StateName::$state, 
-                            given: todo!()
+                            held: self::StateName::$state, 
+                            given: input.name()
                         }))
                     }),+
                 }

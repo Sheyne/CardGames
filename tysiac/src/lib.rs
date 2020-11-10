@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn bid_a() -> Result<(), Error<String>> {
+    fn bid_a() -> Result<(), Error<String, StateName>> {
         let mut game = Game;
         let state = BiddingA {
             hands: test_hands_1(),
