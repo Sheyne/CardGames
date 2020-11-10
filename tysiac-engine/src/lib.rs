@@ -7,11 +7,7 @@ pub struct Tysiac {
 }
 
 impl Tysiac {
-    pub fn feed(
-        &mut self,
-        _player: usize,
-        packet: StateInput,
-    ) -> Option<Error<StateError, State>> {
+    pub fn feed(&mut self, _player: usize, packet: StateInput) -> Option<Error<StateError, State>> {
         self.state.take().and_then(|state| {
             let (state, error) = state.step(&mut self.game, packet);
 

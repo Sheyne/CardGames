@@ -1,4 +1,6 @@
-use either::Either;
+mod states;
+
+pub use states::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Rank {
@@ -37,207 +39,81 @@ impl Card {
     }
 }
 
-pub trait Step {
-    type SomeState;
-    type Context;
-    type Input;
-    type ThisState;
-    type NextState: Into<Self::SomeState>;
-    type Error;
-
-    fn step(
-        self,
-        game: &mut Self::Context,
-        input: Self::Input,
-    ) -> StepResult<Self::ThisState, Self::NextState, Self::Error>;
-}
-
-pub struct StepResult<ThisState, NextState, Error>(
-    pub Either<ThisState, NextState>,
-    pub Result<(), Error>,
-);
-
-#[derive(Debug)]
-pub enum Error<StepError, State> {
-    StepError(StepError),
-    NotInCorrectStateError { held: State, given: State },
-}
-
-impl<ThisState, NextState, Error> From<StepResult<ThisState, NextState, Error>>
-    for Result<Either<ThisState, NextState>, Error>
-{
-    fn from(src: StepResult<ThisState, NextState, Error>) -> Self {
-        let StepResult(next, error) = src;
-        error.map(|_| next)
-    }
-}
-
-pub trait State {
-    type Id;
-
-    fn state() -> Self::Id;
-}
-
-impl<ThisState, NextState, E, N> StepResult<ThisState, NextState, E>
-where
-    ThisState: State<Id = N>,
-    NextState: State<Id = N>,
-{
-    pub fn this(self) -> Result<ThisState, Error<E, N>> {
-        let Self(next, error) = self;
-        error.map_err(|e| Error::StepError(e)).and_then(|_| {
-            next.left().ok_or(Error::NotInCorrectStateError {
-                held: ThisState::state(),
-                given: NextState::state(),
-            })
-        })
-    }
-
-    pub fn next(self) -> Result<NextState, Error<E, N>> {
-        let Self(next, error) = self;
-        error.map_err(|e| Error::StepError(e)).and_then(|_| {
-            next.right().ok_or(Error::NotInCorrectStateError {
-                held: NextState::state(),
-                given: ThisState::state(),
-            })
-        })
-    }
-
-    pub fn stay(this: ThisState) -> Self {
-        Self(Either::Left(this), Ok(()))
-    }
-
-    pub fn cont(next: NextState) -> Self {
-        Self(Either::Right(next), Ok(()))
-    }
-
-    pub fn fail(this: ThisState, result: E) -> Self {
-        Self(Either::Left(this), Err(result))
-    }
-
-    pub fn fail_continue(next: NextState, result: E) -> Self {
-        Self(Either::Right(next), Err(result))
-    }
-}
+#[derive(Debug, PartialEq, Eq)]
+pub struct Pile<T>(Vec<T>);
 
 #[macro_export]
-macro_rules! game_states {
-    { context: $context:ty,
-      states: {
-        $( $state:ident
-         { $( $field:ident : $type:ty),* $(,)? }
-         ( $( $arg:ident : $arg_type:ty),* $(,)? ) -> ( $next_state:ty , $error:ty $(,)? )
-         $body:expr
-        ),+ $(,)? }
-     } => {
-        $(
-            #[derive(Debug)]
-            pub struct $state {
-                $( $field : $type ), *
-            }
+macro_rules! pile {
+    () => (
+        $crate::Pile::default()
+    );
 
-            impl $crate::State for $state {
-                type Id = self::State;
+    ($($x:expr),+ $(,)?) => (
+        Pile::from_vec(vec![ $($x),+ ])
+    );
+}
 
-                fn state() -> Self::Id {
-                    return Self::Id::$state;
-                }
-            }
+impl<T> Default for Pile<T> {
+    fn default() -> Pile<T> {
+        Pile(vec![])
+    }
+}
 
-            impl From<$state> for self::SomeState {
-                fn from(state: $state) -> self::SomeState {
-                    self::SomeState::$state(state)
-                }
-            }
+impl<T> Extend<T> for Pile<T> {
+    fn extend<U>(&mut self, cards: U)
+    where
+        U: std::iter::IntoIterator<Item = T>,
+    {
+        self.0.extend(cards)
+    }
+}
 
-            impl $crate::Step for $state {
-                type SomeState = SomeState;
-                type Context = $context;
-                type Input = ($( $arg_type ), * );
-                type ThisState = self::$state;
-                type NextState = $next_state;
-                type Error = $error;
+impl<T> Pile<T> {
+    pub fn from_vec(v: Vec<T>) -> Pile<T> {
+        Pile(v)
+    }
 
-                fn step(self, context: &mut $context, input: Self::Input) -> $crate::StepResult<Self::ThisState, Self::NextState, Self::Error>
-                {
-                    let ($( $arg ), * ) = input;
-                    let func: &Fn(Self, &mut $context, $( $arg_type ), *) -> $crate::StepResult<Self::ThisState, Self::NextState, Self::Error> = &$body;
-                    func(self, context, $( $arg ), * )
-                }
-            }
-        )+
+    pub fn drain(&mut self) -> std::vec::Drain<'_, T> {
+        self.0.drain(..)
+    }
 
-        #[derive(Debug)]
-        pub enum StateInput {
-            $($state ( $( $arg_type),* ) ), +
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&T> {
+        if index < self.0.len() {
+            Some(&self.0[index])
+        } else {
+            None
         }
+    }
 
-        impl self::StateInput {
-            pub fn state(&self) -> self::State {
-                match self {
-                    $(self::StateInput::$state($( $arg ),*) => self::State::$state ), +
-                }
-            }
-        }
+    pub fn deal(deck: &mut impl Iterator<Item = T>, count: usize) -> Pile<T> {
+        Pile(deck.take(count).collect())
+    }
 
-        #[derive(Debug)]
-        pub enum StateError {
-            $( $state($error) ), +
-        }
+    pub fn contains<D>(&self, desc: &D) -> bool
+    where
+        D: PartialEq<T>,
+    {
+        self.0.iter().any(|c| desc == c)
+    }
 
-        impl self::StateError {
-            pub fn state(&self) -> self::State {
-                match self {
-                    $(self::StateError::$state(_) => self::State::$state ), +
-                }
-            }
-        }
+    pub fn remove<D>(&mut self, desc: &D) -> Option<T>
+    where
+        D: PartialEq<T>,
+    {
+        let index = self.0.iter().position(|c| desc == c);
 
-        #[derive(Debug)]
-        pub enum SomeState {
-            $($state($state)), +
-        }
+        index.map(|index| self.0.remove(index))
+    }
 
-        #[derive(Debug)]
-        pub enum State {
-            $($state), +
-        }
+    pub fn add(&mut self, card: T) {
+        self.0.push(card)
+    }
 
-        impl SomeState {
-            pub fn state(&self) -> self::State {
-                match self {
-                    $(self::SomeState::$state(_) => self::State::$state ), +
-                }
-            }
-
-            pub fn step(self, context: &mut $context, input: self::StateInput) -> (Self, ::core::option::Option<$crate::Error<self::StateError, self::State>>)
-            {
-                match (self, input) {
-                    $((self::SomeState::$state(state), self::StateInput::$state( $( $arg ), * )) => {
-                        let self::StepResult(next, result) = state.step(context, ($( $arg ), *));
-                        let err = result.map_err(|e| $crate::Error::StepError(self::StateError::$state(e))).err();
-                        (::core::convert::Into::into(next), err)
-                    }),+
-                    $((SomeState::$state(a), input) =>{
-                        (self::SomeState::$state(a), Some($crate::Error::NotInCorrectStateError{
-                            held: self::State::$state,
-                            given: input.state()
-                        }))
-                    }),+
-                }
-            }
-        }
-
-        impl<A, B> From<::either::Either<A, B>> for SomeState
-        where A : Into<SomeState>,
-            B : Into<SomeState>
-        {
-            fn from(s: ::either::Either<A, B>) -> SomeState {
-                match s {
-                    ::either::Either::Left(a) => a.into(),
-                    ::either::Either::Right(b) => b.into()
-                }
-            }
-        }
-    };
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.0.iter()
+    }
 }

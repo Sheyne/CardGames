@@ -1,4 +1,4 @@
-use card_games_lib::{game_states, Step, StepResult};
+use card_games_lib::{game_states, pile, Pile, Step, StepResult};
 use itertools::Itertools;
 use rand::{seq::SliceRandom, Rng};
 use strum::IntoEnumIterator;
@@ -89,9 +89,9 @@ fn all_cards() -> impl Iterator<Item = Card> {
 // note that you cannot copy cards as these represent the physical deck
 pub struct Card(Rank, Suit);
 
-impl PartialEq<card_games_lib::Card> for Card {
-    fn eq(&self, other: &card_games_lib::Card) -> bool {
-        self.description() == *other
+impl PartialEq<Card> for card_games_lib::Card {
+    fn eq(&self, other: &Card) -> bool {
+        other.description() == *self
     }
 }
 
@@ -158,22 +158,8 @@ impl Rank {
     }
 }
 
-#[macro_export]
-macro_rules! pile {
-    () => (
-        $crate::Pile(vec![])
-    );
-
-    ($($x:expr),+ $(,)?) => (
-        Pile(vec![ $($x),+ ])
-    );
-}
-
-#[derive(Debug, PartialEq, Eq, Default)]
-struct Pile(Vec<Card>);
-
 #[derive(Debug, PartialEq, Eq)]
-struct Piles([Pile; 3]);
+struct Piles([Pile<Card>; 3]);
 
 impl Player {
     fn next(&self) -> Self {
@@ -202,58 +188,9 @@ impl Player {
     }
 }
 
-impl Extend<Card> for Pile {
-    fn extend<T>(&mut self, cards: T)
-    where
-        T: std::iter::IntoIterator<Item = Card>,
-    {
-        self.0.extend(cards)
-    }
-}
-
-impl Pile {
-    fn drain(&mut self) -> std::vec::Drain<'_, Card> {
-        self.0.drain(..)
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn get(&self, index: usize) -> Option<&Card> {
-        if index < self.0.len() {
-            Some(&self.0[index])
-        } else {
-            None
-        }
-    }
-
-    fn deal(deck: &mut impl Iterator<Item = Card>, count: usize) -> Pile {
-        Pile(deck.take(count).collect())
-    }
-
-    fn contains(&self, card: card_games_lib::Card) -> bool {
-        self.0.iter().any(|c| c == &card)
-    }
-
-    fn remove(&mut self, card: card_games_lib::Card) -> Option<Card> {
-        let index = self.0.iter().position(|c| c == &card);
-
-        index.map(|index| self.0.remove(index))
-    }
-
-    fn add(&mut self, card: Card) {
-        self.0.push(card)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &Card> {
-        self.0.iter()
-    }
-}
-
 impl Piles {
     fn empty() -> Piles {
-        Piles([Pile::default(), Pile::default(), Pile::default()])
+        Piles([pile!(), pile!(), pile!()])
     }
 
     fn deal(deck: &mut impl Iterator<Item = Card>) -> Piles {
@@ -264,11 +201,11 @@ impl Piles {
         ])
     }
 
-    fn hand(&self, p: &Player) -> &Pile {
+    fn hand(&self, p: &Player) -> &Pile<Card> {
         &self.0[p.index()]
     }
 
-    fn hand_mut(&mut self, p: &Player) -> &mut Pile {
+    fn hand_mut(&mut self, p: &Player) -> &mut Pile<Card> {
         &mut self.0[p.index()]
     }
 }
@@ -346,15 +283,15 @@ game_states! {
             hands: Piles,
             bid: usize
         } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |this, _context, card_for_next, card_for_prev| {
-            if !this.hands.hand(&this.bid_winner).contains(card_for_next)
-            || !this.hands.hand(&this.bid_winner).contains(card_for_prev) {
+            if !this.hands.hand(&this.bid_winner).contains(&card_for_next)
+            || !this.hands.hand(&this.bid_winner).contains(&card_for_prev) {
                 return StepResult::fail(this, "Trying to pass a card you don't have".to_owned())
             }
             let mut hands = this.hands;
             let bid_winners_hand = hands.hand_mut(&this.bid_winner);
 
-            let card_for_next = bid_winners_hand.remove(card_for_next).expect("We checked posession already");
-            let card_for_prev = bid_winners_hand.remove(card_for_prev).expect("We checked posession already");
+            let card_for_next = bid_winners_hand.remove(&card_for_next).expect("We checked posession already");
+            let card_for_prev = bid_winners_hand.remove(&card_for_prev).expect("We checked posession already");
 
             let next_player = this.bid_winner.next();
             hands.hand_mut(&next_player).add(card_for_next);
@@ -379,7 +316,7 @@ game_states! {
             taken: Piles,
             next_player: Player,
             trump: Option<Suit>,
-            play_area: Pile,
+            play_area: Pile<Card>,
             pending_points: [usize; 3],
             bid: usize
         } (player: Player, card: card_games_lib::Card) -> ( Finished, String ) |mut this, _context, player, card| {
@@ -387,7 +324,7 @@ game_states! {
                 if initial_card.suit() != card.suit() {
                     let players_hand = this.hands.hand(&player);
 
-                    let any_cards_match_suit = players_hand.iter().filter(|c| c != &&card).any(|c| c.suit() == initial_card.suit());
+                    let any_cards_match_suit = players_hand.iter().filter(|c| &&card != c).any(|c| c.suit() == initial_card.suit());
 
                     if any_cards_match_suit {
                         let message = format!("Cannot play card of {:?} when have {:?} in hand", card.suit(), initial_card.suit());
@@ -396,7 +333,7 @@ game_states! {
                 }
             }
 
-            if let Some(played_card) = this.hands.hand_mut(&player).remove(card) {
+            if let Some(played_card) = this.hands.hand_mut(&player).remove(&card) {
                 let mut play_area = this.play_area;
                 let mut next_player = this.next_player.next();
                 let mut trump = this.trump;
@@ -461,7 +398,7 @@ game_states! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use card_games_lib::{Error, Step};
+    use card_games_lib::{pile, Error, Step};
     use {Rank::*, Suit::*};
 
     fn test_prikup_1() -> [Card; 3] {
@@ -522,7 +459,7 @@ mod tests {
         assert_eq!(state.bid_winner, Player::C);
         assert_eq!(
             state.hands.hand(&Player::C),
-            &Pile(vec![
+            &pile![
                 Card(Ace, Spades),
                 Card(Ten, Spades),
                 Card(King, Spades),
@@ -533,7 +470,7 @@ mod tests {
                 Card(Queen, Clubs),
                 Card(Jack, Clubs),
                 Card(Nine, Clubs),
-            ])
+            ]
         );
         assert_eq!(state.hands.hand(&Player::A).iter().count(), 7);
         assert_eq!(state.hands.hand(&Player::B).iter().count(), 7);
