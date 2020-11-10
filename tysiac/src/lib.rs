@@ -180,7 +180,7 @@ game_states! {
     BiddingA {
         hands: Hands,
         prikup: [Card; 3]
-    } (bid: u8) -> ( BiddingB, (), String ) |this, _context, bid| {
+    } (bid: usize) -> ( BiddingB, (), String ) |this, _context, bid| {
         StepResult::cont(BiddingB {
             hands: this.hands,
             prikup: this.prikup,
@@ -190,8 +190,8 @@ game_states! {
     BiddingB {
         hands: Hands,
         prikup: [Card; 3],
-        bids: [u8; 1]
-    } (bid: u8) -> ( BiddingC, (), String ) |this, _context, bid| {
+        bids: [usize; 1]
+    } (bid: usize) -> ( BiddingC, (), String ) |this, _context, bid| {
         StepResult::cont(BiddingC {
             hands: this.hands,
             prikup: this.prikup,
@@ -201,8 +201,8 @@ game_states! {
     BiddingC {
         hands: Hands,
         prikup: [Card; 3],
-        bids: [u8; 2]
-    } (bid: u8) -> ( AdjustingBid , (), String ) |this, _context, bid| {
+        bids: [usize; 2]
+    } (bid: usize) -> ( AdjustingBid , (), String ) |this, _context, bid| {
         let bids = [this.bids[0], this.bids[1], bid];
 
         let highest_bidder = bids
@@ -230,23 +230,32 @@ game_states! {
     AdjustingBid {
         bid_winner: Player,
         hands: Hands,
-        bids: [u8; 3]
-    } (increase: u8) -> ( Distrubuting , (), String ) |this, _context, increase| {
-        let mut bids = this.bids;
+        bids: [usize; 3]
+    } (increase: usize) -> ( Distrubuting , (), String ) |this, _context, increase| {
+        let winning_bid = this.bids[this.bid_winner.index()];
 
-        bids[0] += increase;
+        if let Some(new_bid) = winning_bid.checked_add(increase) {
+            let mut bids = this.bids;
+            bids[this.bid_winner.index()] = new_bid;
 
-        StepResult::cont(Distrubuting {
-            bid_winner: this.bid_winner,
-            hands: this.hands,
-            bids: bids,
-        })
+            StepResult::cont(Distrubuting {
+                bid_winner: this.bid_winner,
+                hands: this.hands,
+                bids: bids,
+            })
+        } else {
+            StepResult::fail(this, "Bid increase is too high".to_owned())
+        }
     },
     Distrubuting {
         bid_winner: Player,
         hands: Hands,
-        bids: [u8; 3]
+        bids: [usize; 3]
     } (next: usize, prev: usize) -> ( Playing, (), String ) |this, _context, index_for_b, index_for_c| {
+        let bid_winner_hand_size = this.hands.hand(&this.bid_winner).len();
+        if index_for_b >= bid_winner_hand_size || index_for_c >= bid_winner_hand_size {
+            return StepResult::fail(this, "Trying to pass a card at a non-existant index".to_owned())
+        }
         let mut hands = this.hands;
         let bid_winners_hand = hands.hand_mut(&this.bid_winner);
 
@@ -280,14 +289,14 @@ game_states! {
         bid_winner: Player,
         hands: Hands,
         taken: Hands,
-        bids: [u8; 3]
+        bids: [usize; 3]
     } (player: Player, card: usize) -> ( Either<Playing, Finished>, (), String ) |_this, _context, _player, _card| {
         todo!()
     },
     Finished {
         bid_winner: Player,
         taken: Hands,
-        bids: [u8; 3]
+        bids: [usize; 3]
     } () -> ( BiddingA, (), String ) |_this, _context| {
         todo!()
     }
@@ -374,7 +383,49 @@ mod tests {
 
         let state: Distrubuting = state.step(&mut game, 10).next()?;
 
-        assert_eq!(state.bids, [20, 20, 30]);
+        assert_eq!(state.bids, [10, 20, 40]);
+
+        let state: Playing = state.step(&mut game, (4, 2)).next()?;
+
+        assert_eq!(
+            state.hands.hand(&Player::C),
+            &vec![
+                Card(Ace, Spades),
+                Card(Ten, Spades),
+                Card(Queen, Spades),
+                Card(Nine, Spades),
+                Card(King, Clubs),
+                Card(Queen, Clubs),
+                Card(Jack, Clubs),
+                Card(Nine, Clubs),
+            ]
+        );
+        assert_eq!(
+            state.hands.hand(&Player::A),
+            &vec![
+                Card(Ace, Hearts),
+                Card(Ten, Hearts),
+                Card(King, Hearts),
+                Card(Queen, Hearts),
+                Card(Jack, Hearts),
+                Card(Nine, Hearts),
+                Card(Ace, Clubs),
+                Card(Jack, Spades),
+            ]
+        );
+        assert_eq!(
+            state.hands.hand(&Player::B),
+            &vec![
+                Card(Ace, Diamonds),
+                Card(Ten, Diamonds),
+                Card(King, Diamonds),
+                Card(Queen, Diamonds),
+                Card(Jack, Diamonds),
+                Card(Nine, Diamonds),
+                Card(Ten, Clubs),
+                Card(King, Spades),
+            ]
+        );
 
         Ok(())
     }
