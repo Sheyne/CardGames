@@ -1,5 +1,4 @@
 use card_games_lib::{game_states, Step, StepResult};
-use either::Either;
 use itertools::Itertools;
 use rand::{seq::SliceRandom, Rng};
 use strum::IntoEnumIterator;
@@ -7,11 +6,21 @@ use strum_macros::EnumIter;
 
 pub struct Game;
 
-#[derive(EnumIter)]
+#[derive(EnumIter, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Player {
     A,
     B,
     C,
+}
+
+struct InfinitePlayerIter(Player);
+
+impl Iterator for InfinitePlayerIter {
+    type Item = Player;
+    fn next(&mut self) -> std::option::Option<<Self as std::iter::Iterator>::Item> {
+        self.0 = self.0.next();
+        Some(self.0)
+    }
 }
 
 impl States {
@@ -42,7 +51,7 @@ impl BiddingA {
 
     fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
         Self {
-            hands: Hands::deal(deck),
+            hands: Piles::deal(deck),
             prikup: [
                 deck.next().unwrap(),
                 deck.next().unwrap(),
@@ -74,7 +83,7 @@ impl BiddingA {
         }
 
         Ok(Self {
-            hands: Hands::new(a, b, c),
+            hands: Piles::new(a, b, c),
             prikup: [prikup.remove(0), prikup.remove(0), prikup.remove(0)],
         })
     }
@@ -88,7 +97,7 @@ pub enum Suit {
     Hearts,
 }
 
-#[derive(EnumIter, Clone, Debug, PartialEq, Eq)]
+#[derive(EnumIter, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rank {
     Nine,
     Jack,
@@ -105,19 +114,83 @@ fn all_cards() -> impl Iterator<Item = Card> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+// note that you cannot copy cards as these represent the physical deck
 pub struct Card(Rank, Suit);
 
-impl Card {
-    pub fn suit(self) -> Suit {
-        self.1
-    }
-
-    pub fn rank(self) -> Rank {
-        self.0
+impl PartialEq<card_games_lib::Card> for Card {
+    fn eq(&self, other: &card_games_lib::Card) -> bool {
+        self.description() == *other
     }
 }
 
-struct Hands([Vec<Card>; 3]);
+impl PartialEq<card_games_lib::Suit> for &Suit {
+    fn eq(&self, other: &card_games_lib::Suit) -> bool {
+        self.description() == *other
+    }
+}
+
+impl PartialEq<card_games_lib::Rank> for &Rank {
+    fn eq(&self, other: &card_games_lib::Rank) -> bool {
+        self.description() == *other
+    }
+}
+
+impl Card {
+    pub fn suit(&self) -> &Suit {
+        &self.1
+    }
+
+    pub fn rank(&self) -> &Rank {
+        &self.0
+    }
+
+    pub fn description(&self) -> card_games_lib::Card {
+        card_games_lib::Card(self.rank().description(), self.suit().description())
+    }
+}
+
+impl Suit {
+    pub fn marriage_value(&self) -> usize {
+        match self {
+            Suit::Hearts => 100,
+            Suit::Diamonds => 80,
+            Suit::Clubs => 60,
+            Suit::Spades => 40,
+        }
+    }
+
+    pub fn description(&self) -> card_games_lib::Suit {
+        match self {
+            Suit::Diamonds => card_games_lib::Suit::Diamonds,
+            Suit::Clubs => card_games_lib::Suit::Clubs,
+            Suit::Hearts => card_games_lib::Suit::Hearts,
+            Suit::Spades => card_games_lib::Suit::Spades,
+        }
+    }
+}
+
+impl Rank {
+    pub fn is_weddable(&self) -> bool {
+        self == &Rank::King || self == &Rank::Queen
+    }
+
+    pub fn description(&self) -> card_games_lib::Rank {
+        match self {
+            Rank::Ace => card_games_lib::Rank::Ace,
+            Rank::Ten => card_games_lib::Rank::Ten,
+            Rank::King => card_games_lib::Rank::King,
+            Rank::Queen => card_games_lib::Rank::Queen,
+            Rank::Jack => card_games_lib::Rank::Jack,
+            Rank::Nine => card_games_lib::Rank::Nine,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+struct Pile(Vec<Card>);
+
+#[derive(Debug, PartialEq, Eq)]
+struct Piles([Pile; 3]);
 
 impl Player {
     fn next(&self) -> Self {
@@ -146,41 +219,78 @@ impl Player {
     }
 }
 
-impl Hands {
-    fn empty() -> Hands {
-        Hands([vec![], vec![], vec![]])
+impl Extend<Card> for Pile {
+    fn extend<T>(&mut self, cards: T)
+    where
+        T: std::iter::IntoIterator<Item = Card>,
+    {
+        self.0.extend(cards)
+    }
+}
+
+impl Pile {
+    fn deal(deck: &mut impl Iterator<Item = Card>, count: usize) -> Pile {
+        Pile(deck.take(count).collect())
+    }
+
+    fn new(cards: Vec<Card>) -> Pile {
+        Pile(cards)
+    }
+
+    fn contains(&self, card: card_games_lib::Card) -> bool {
+        self.0.iter().any(|c| c == &card)
+    }
+
+    fn remove(&mut self, card: card_games_lib::Card) -> Option<Card> {
+        let index = self.0.iter().position(|c| c == &card);
+
+        index.map(|index| self.0.remove(index))
+    }
+
+    fn add(&mut self, card: Card) {
+        self.0.push(card)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Card> {
+        self.0.iter()
+    }
+}
+
+impl Piles {
+    fn empty() -> Piles {
+        Piles([Pile::default(), Pile::default(), Pile::default()])
     }
 
     fn new(a: Vec<Card>, b: Vec<Card>, c: Vec<Card>) -> Self {
-        Self([a, b, c])
+        Self([Pile::new(a), Pile::new(b), Pile::new(c)])
     }
 
-    fn deal_hand(deck: &mut impl Iterator<Item = Card>) -> Vec<Card> {
-        deck.take(7).collect()
-    }
-
-    fn deal(deck: &mut impl Iterator<Item = Card>) -> Hands {
-        Hands([
-            Self::deal_hand(deck),
-            Self::deal_hand(deck),
-            Self::deal_hand(deck),
+    fn deal(deck: &mut impl Iterator<Item = Card>) -> Piles {
+        Piles([
+            Pile::deal(deck, 7),
+            Pile::deal(deck, 7),
+            Pile::deal(deck, 7),
         ])
     }
 
-    fn hand(&self, p: &Player) -> &Vec<Card> {
+    fn hand(&self, p: &Player) -> &Pile {
         &self.0[p.index()]
     }
 
-    fn hand_mut(&mut self, p: &Player) -> &mut Vec<Card> {
+    fn hand_mut(&mut self, p: &Player) -> &mut Pile {
         &mut self.0[p.index()]
     }
 }
 
 game_states! {
     BiddingA {
-        hands: Hands,
+        hands: Piles,
         prikup: [Card; 3]
-    } (bid: usize) -> ( BiddingB, (), String ) |this, _context, bid| {
+    } (bid: usize) -> ( BiddingB, String ) |this, _context, bid| {
         StepResult::cont(BiddingB {
             hands: this.hands,
             prikup: this.prikup,
@@ -188,10 +298,10 @@ game_states! {
         })
     },
     BiddingB {
-        hands: Hands,
+        hands: Piles,
         prikup: [Card; 3],
         bids: [usize; 1]
-    } (bid: usize) -> ( BiddingC, (), String ) |this, _context, bid| {
+    } (bid: usize) -> ( BiddingC, String ) |this, _context, bid| {
         StepResult::cont(BiddingC {
             hands: this.hands,
             prikup: this.prikup,
@@ -199,49 +309,44 @@ game_states! {
         })
     },
     BiddingC {
-        hands: Hands,
+        hands: Piles,
         prikup: [Card; 3],
         bids: [usize; 2]
-    } (bid: usize) -> ( AdjustingBid , (), String ) |this, _context, bid| {
+    } (bid: usize) -> ( AdjustingBid , String ) |this, _context, bid| {
         let bids = [this.bids[0], this.bids[1], bid];
 
-        let highest_bidder = bids
+        let (highest_bidder, winning_bid) = bids
             .iter()
             .enumerate()
             .max_by_key(|(_, val)| *val)
-            .and_then(|(idx, _)| Player::from_index(idx))
-            .expect("We know there's at least one element and its at a valid index");
+            .expect("We know there's at least one element");
+        let highest_bidder = Player::from_index(highest_bidder).expect("Index is valid by construction");
 
         let mut hands = this.hands;
 
         let [pick_1, pick_2, pick_3] = this.prikup;
 
         let highest_bidders_hand = hands.hand_mut(&highest_bidder);
-        highest_bidders_hand.push(pick_1);
-        highest_bidders_hand.push(pick_2);
-        highest_bidders_hand.push(pick_3);
+        highest_bidders_hand.add(pick_1);
+        highest_bidders_hand.add(pick_2);
+        highest_bidders_hand.add(pick_3);
 
         StepResult::cont(AdjustingBid {
             bid_winner: highest_bidder,
+            bid: *winning_bid,
             hands: hands,
-            bids: bids,
         })
     },
     AdjustingBid {
         bid_winner: Player,
-        hands: Hands,
-        bids: [usize; 3]
-    } (increase: usize) -> ( Distrubuting , (), String ) |this, _context, increase| {
-        let winning_bid = this.bids[this.bid_winner.index()];
-
-        if let Some(new_bid) = winning_bid.checked_add(increase) {
-            let mut bids = this.bids;
-            bids[this.bid_winner.index()] = new_bid;
-
+        bid: usize,
+        hands: Piles
+    } (increase: usize) -> ( Distrubuting , String ) |this, _context, increase| {
+        if let Some(new_bid) = this.bid.checked_add(increase) {
             StepResult::cont(Distrubuting {
                 bid_winner: this.bid_winner,
                 hands: this.hands,
-                bids: bids,
+                bid: new_bid,
             })
         } else {
             StepResult::fail(this, "Bid increase is too high".to_owned())
@@ -249,55 +354,115 @@ game_states! {
     },
     Distrubuting {
         bid_winner: Player,
-        hands: Hands,
-        bids: [usize; 3]
-    } (next: usize, prev: usize) -> ( Playing, (), String ) |this, _context, index_for_b, index_for_c| {
-        let bid_winner_hand_size = this.hands.hand(&this.bid_winner).len();
-        if index_for_b >= bid_winner_hand_size || index_for_c >= bid_winner_hand_size {
-            return StepResult::fail(this, "Trying to pass a card at a non-existant index".to_owned())
+        hands: Piles,
+        bid: usize
+    } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |this, _context, card_for_next, card_for_prev| {
+        if !this.hands.hand(&this.bid_winner).contains(card_for_next)
+        || !this.hands.hand(&this.bid_winner).contains(card_for_prev) {
+            return StepResult::fail(this, "Trying to pass a card you don't have".to_owned())
         }
         let mut hands = this.hands;
         let bid_winners_hand = hands.hand_mut(&this.bid_winner);
 
-        let (card_for_b, card_for_c) = if index_for_b > index_for_c {
-            (
-                bid_winners_hand.remove(index_for_b),
-                bid_winners_hand.remove(index_for_c),
-            )
-        } else {
-            let (c, b) = (
-                bid_winners_hand.remove(index_for_c),
-                bid_winners_hand.remove(index_for_b),
-            );
-            (b, c)
-        };
+        let card_for_next = bid_winners_hand.remove(card_for_next).expect("We checked posession already");
+        let card_for_prev = bid_winners_hand.remove(card_for_prev).expect("We checked posession already");
 
         let next_player = this.bid_winner.next();
-        hands.hand_mut(&next_player).push(card_for_b);
+        hands.hand_mut(&next_player).add(card_for_next);
 
         let next_player = next_player.next();
-        hands.hand_mut(&next_player).push(card_for_c);
+        hands.hand_mut(&next_player).add(card_for_prev);
 
         StepResult::cont(Playing {
             bid_winner: this.bid_winner,
             hands: hands,
-            taken: Hands::empty(),
-            bids: this.bids,
+            trump: None,
+            play_area: vec![],
+            next_player: this.bid_winner,
+            pending_points: [0,0,0],
+            taken: Piles::empty(),
+            bid: this.bid,
         })
     },
     Playing {
         bid_winner: Player,
-        hands: Hands,
-        taken: Hands,
-        bids: [usize; 3]
-    } (player: Player, card: usize) -> ( Either<Playing, Finished>, (), String ) |_this, _context, _player, _card| {
-        todo!()
+        hands: Piles,
+        taken: Piles,
+        next_player: Player,
+        trump: Option<Suit>,
+        play_area: Vec<Card>,
+        pending_points: [usize; 3],
+        bid: usize
+    } (player: Player, card: card_games_lib::Card) -> ( Finished, String ) |mut this, _context, player, card| {
+        let initial_card = &this.play_area[0];
+        if initial_card.suit() != card.suit() {
+            let players_hand = this.hands.hand(&player);
+
+            let any_cards_match_suit = players_hand.iter().filter(|c| c != &&card).any(|c| c.suit() == initial_card.suit());
+
+            if any_cards_match_suit {
+                let message = format!("Cannot play card of {:?} when have {:?} in hand", card.suit(), initial_card.suit());
+                return StepResult::fail(this, message)
+            }
+        }
+
+        if let Some(played_card) = this.hands.hand_mut(&player).remove(card) {
+            let mut play_area = this.play_area;
+            let mut next_player = this.next_player.next();
+            let mut trump = this.trump;
+            let mut pending_points = this.pending_points;
+
+            if play_area.len() == 0 && played_card.rank().is_weddable() {
+                let has_marriage = this.hands.hand(&player).iter().any(|c| c.suit() == played_card.suit() && c.rank().is_weddable());
+                if has_marriage {
+                    trump = Some(played_card.suit().clone());
+                    pending_points[player.index()] += played_card.suit().marriage_value();
+                }
+            }
+
+            play_area.push(played_card);
+
+            if play_area.len() == 3 {
+                let lead_suit = play_area[0].suit();
+
+                let winning_card = trump.iter()
+                                        .flat_map(|trump| play_area.iter().filter(move |c| c.suit() == trump))
+                                        .max_by_key(|c|c.rank())
+                                        .or_else(|| play_area.iter().filter(move |c| c.suit() == lead_suit).max_by_key(|c|c.rank()))
+                                        .expect("There will be a highest card of lead suit");
+
+
+                let winner = play_area.iter().zip(InfinitePlayerIter(next_player))
+                                             .filter(|(card, _)| card == &winning_card)
+                                             .map(|(_, player)| player)
+                                             .next()
+                                             .expect("Some card won");
+
+                next_player = winner;
+
+                this.taken.hand_mut(&winner).extend(play_area.drain(..));
+            }
+
+            StepResult::stay(Playing {
+                bid_winner: this.bid_winner,
+                hands: this.hands,
+                trump: trump,
+                pending_points: pending_points,
+                next_player: next_player,
+                play_area: play_area,
+                taken: this.taken,
+                bid: this.bid,
+            })
+        } else {
+            StepResult::fail(this, format!("{:?} is not in hand", card))
+        }
     },
     Finished {
         bid_winner: Player,
-        taken: Hands,
-        bids: [usize; 3]
-    } () -> ( BiddingA, (), String ) |_this, _context| {
+        taken: Piles,
+        pending_points: [usize; 3],
+        bid: usize
+    } () -> ( BiddingA, String ) |_this, _context| {
         todo!()
     }
 }
@@ -312,8 +477,8 @@ mod tests {
         [Card(Queen, Clubs), Card(Jack, Clubs), Card(Nine, Clubs)]
     }
 
-    fn test_hands_1() -> Hands {
-        Hands::new(
+    fn test_hands_1() -> Piles {
+        Piles::new(
             vec![
                 Card(Ace, Hearts),
                 Card(Ten, Hearts),
@@ -362,10 +527,11 @@ mod tests {
 
         let state: AdjustingBid = state.step(&mut game, 30).next()?;
 
-        assert_eq!(state.bids, [10, 20, 30]);
+        assert_eq!(state.bid, 30);
+        assert_eq!(state.bid_winner, Player::C);
         assert_eq!(
             state.hands.hand(&Player::C),
-            &vec![
+            &Pile::new(vec![
                 Card(Ace, Spades),
                 Card(Ten, Spades),
                 Card(King, Spades),
@@ -376,20 +542,25 @@ mod tests {
                 Card(Queen, Clubs),
                 Card(Jack, Clubs),
                 Card(Nine, Clubs),
-            ]
+            ])
         );
         assert_eq!(state.hands.hand(&Player::A).len(), 7);
         assert_eq!(state.hands.hand(&Player::B).len(), 7);
 
         let state: Distrubuting = state.step(&mut game, 10).next()?;
 
-        assert_eq!(state.bids, [10, 20, 40]);
-
-        let state: Playing = state.step(&mut game, (4, 2)).next()?;
+        assert_eq!(state.bid, 40);
+        assert_eq!(state.bid_winner, Player::C);
+        let state: Playing = state
+            .step(&mut game, {
+                use card_games_lib::{Card, Rank::*, Suit::*};
+                (Card(Jack, Spades), Card(King, Spades))
+            })
+            .next()?;
 
         assert_eq!(
             state.hands.hand(&Player::C),
-            &vec![
+            &Pile::new(vec![
                 Card(Ace, Spades),
                 Card(Ten, Spades),
                 Card(Queen, Spades),
@@ -398,11 +569,11 @@ mod tests {
                 Card(Queen, Clubs),
                 Card(Jack, Clubs),
                 Card(Nine, Clubs),
-            ]
+            ])
         );
         assert_eq!(
             state.hands.hand(&Player::A),
-            &vec![
+            &Pile::new(vec![
                 Card(Ace, Hearts),
                 Card(Ten, Hearts),
                 Card(King, Hearts),
@@ -411,11 +582,11 @@ mod tests {
                 Card(Nine, Hearts),
                 Card(Ace, Clubs),
                 Card(Jack, Spades),
-            ]
+            ])
         );
         assert_eq!(
             state.hands.hand(&Player::B),
-            &vec![
+            &Pile::new(vec![
                 Card(Ace, Diamonds),
                 Card(Ten, Diamonds),
                 Card(King, Diamonds),
@@ -424,7 +595,7 @@ mod tests {
                 Card(Nine, Diamonds),
                 Card(Ten, Clubs),
                 Card(King, Spades),
-            ]
+            ])
         );
 
         Ok(())

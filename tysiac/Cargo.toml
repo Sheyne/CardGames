@@ -8,8 +8,8 @@ edition = "2018"
 
 [dependencies]
 card-games-lib = {path = "../card-games-lib"}
-either = ""
 itertools = ""
 strum = ""
 strum_macros = ""
 rand = ""
+either = ""

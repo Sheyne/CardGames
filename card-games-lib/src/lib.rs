@@ -1,5 +1,42 @@
 use either::Either;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Rank {
+    Ace,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    Ten,
+    Jack,
+    Queen,
+    King,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Suit {
+    Diamonds,
+    Clubs,
+    Hearts,
+    Spades,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct Card(pub Rank, pub Suit);
+
+impl Card {
+    pub fn rank(self) -> Rank {
+        self.0
+    }
+    pub fn suit(self) -> Suit {
+        self.1
+    }
+}
+
 pub trait Step {
     type States;
     type Context;
@@ -71,7 +108,7 @@ impl<ThisState, NextState, E> StepResult<ThisState, NextState, E> {
 macro_rules! game_states {
     { $( $state:ident
          { $( $field:ident : $type:ty),* }
-         ($( $arg:ident : $arg_type:ty),*) -> ( $next_state:ty , $success:ty , $error:ty )
+         ($( $arg:ident : $arg_type:ty),*) -> ( $next_state:ty , $error:ty )
          $body:expr
         ),+ } => {
         $(
