@@ -42,6 +42,21 @@ impl Card {
 }
 
 #[macro_export]
+macro_rules! pile_extract {
+    ($pile:expr, $($x:expr),+ $(,)?) => {
+        {
+            let pile = $pile;
+
+            if ($(pile.contains($x))&&+) {
+                Some(($(pile.remove($x).expect("Just checked it is contained")),+))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+#[macro_export]
 macro_rules! pile {
     () => (
         $crate::Pile::default()

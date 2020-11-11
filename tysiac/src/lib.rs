@@ -1,4 +1,4 @@
-use card_games_lib::{game_states, pile, step_try, Pile, Step, StepResult};
+use card_games_lib::{game_states, pile, pile_extract, step_try, Pile, Step, StepResult};
 use core::convert::TryFrom;
 use core::ops::Add;
 use itertools::Itertools;
@@ -328,26 +328,20 @@ game_states! {
             bid_winner: Player,
             hands: Piles,
             bid: usize
-        } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |this, _context, card_for_next, card_for_prev| {
-            if !this.hands.hand(&this.bid_winner).contains(&card_for_next)
-            || !this.hands.hand(&this.bid_winner).contains(&card_for_prev) {
-                return StepResult::fail(this, "Trying to pass a card you don't have".to_owned())
-            }
-            let mut hands = this.hands;
-            let bid_winners_hand = hands.hand_mut(&this.bid_winner);
-
-            let card_for_next = bid_winners_hand.remove(&card_for_next).expect("We checked posession already");
-            let card_for_prev = bid_winners_hand.remove(&card_for_prev).expect("We checked posession already");
+        } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |mut this, _context, card_for_next, card_for_prev| {
+            let (card_for_next, card_for_prev) = step_try!(
+                pile_extract!(this.hands.hand_mut(&this.bid_winner), &card_for_next, &card_for_prev)
+                , this, "Trying to pass a card you don't have".to_owned());
 
             let next_player = this.bid_winner.next();
-            hands.hand_mut(&next_player).add(card_for_next);
+            this.hands.hand_mut(&next_player).add(card_for_next);
 
             let next_player = next_player.next();
-            hands.hand_mut(&next_player).add(card_for_prev);
+            this.hands.hand_mut(&next_player).add(card_for_prev);
 
             StepResult::cont(Playing {
                 bid_winner: this.bid_winner,
-                hands: hands,
+                hands: this.hands,
                 trump: None,
                 play_area: pile![],
                 next_player: this.bid_winner,
