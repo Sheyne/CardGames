@@ -27,6 +27,12 @@ pub struct StepResult<ThisState, NextState, Error>(
     pub Result<(), Error>,
 );
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error<StepError, State> {
+    StepError(StepError),
+    NotInCorrectStateError { held: State, given: State },
+}
+
 impl<ThisState, NextState, Error> From<StepResult<ThisState, NextState, Error>>
     for Result<Either<ThisState, NextState>, Error>
 {
@@ -78,10 +84,16 @@ where
     }
 }
 
-#[derive(Debug)]
-pub enum Error<StepError, State> {
-    StepError(StepError),
-    NotInCorrectStateError { held: State, given: State },
+#[macro_export]
+macro_rules! step_try {
+    ($x:expr, $this:ident, $fail:expr) => {
+        if let Some(x) = $x {
+            x
+        } else {
+            let arg = $fail;
+            return StepResult::fail($this, arg);
+        }
+    };
 }
 
 #[macro_export]
@@ -144,7 +156,7 @@ macro_rules! game_states {
             }
         }
 
-        #[derive(Debug)]
+        #[derive(Debug, PartialEq, Eq)]
         pub enum StateError {
             $( $state($error) ), +
         }
@@ -162,7 +174,7 @@ macro_rules! game_states {
             $($state($state)), +
         }
 
-        #[derive(Debug)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum State {
             $($state), +
         }
@@ -174,16 +186,16 @@ macro_rules! game_states {
                 }
             }
 
-            pub fn step(self, context: &mut $context, input: self::StateInput) -> (Self, ::core::option::Option<$crate::Error<self::StateError, self::State>>)
+            pub fn step(self, context: &mut $context, input: self::StateInput) -> (Self, ::core::result::Result<(), $crate::Error<self::StateError, self::State>>)
             {
                 match (self, input) {
                     $((self::SomeState::$state(state), self::StateInput::$state( $( $arg ), * )) => {
                         let self::StepResult(next, result) = state.step(context, ($( $arg ), *));
-                        let err = result.map_err(|e| $crate::Error::StepError(self::StateError::$state(e))).err();
+                        let err = result.map_err(|e| $crate::Error::StepError(self::StateError::$state(e)));
                         (::core::convert::Into::into(next), err)
                     }),+
                     $((SomeState::$state(a), input) =>{
-                        (self::SomeState::$state(a), Some($crate::Error::NotInCorrectStateError{
+                        (self::SomeState::$state(a), Err($crate::Error::NotInCorrectStateError{
                             held: self::State::$state,
                             given: input.state()
                         }))

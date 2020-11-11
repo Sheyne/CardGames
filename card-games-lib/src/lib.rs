@@ -1,5 +1,4 @@
 mod states;
-
 pub use states::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -30,6 +29,9 @@ pub enum Suit {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Card(pub Rank, pub Suit);
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Pile<T>(Vec<T>);
+
 impl Card {
     pub fn rank(self) -> Rank {
         self.0
@@ -38,9 +40,6 @@ impl Card {
         self.1
     }
 }
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Pile<T>(Vec<T>);
 
 #[macro_export]
 macro_rules! pile {
