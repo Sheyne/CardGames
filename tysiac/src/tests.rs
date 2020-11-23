@@ -41,7 +41,7 @@ fn test_hands_1() -> Piles {
 
 #[test]
 fn bid_a() -> Result<(), Error<String, State>> {
-    let mut game = Game;
+    let mut game = Game::default();
     let state = Bidding {
         current_bid: (Player::A, Fives::one_hundred(), Player::B),
         hands: test_hands_1(),

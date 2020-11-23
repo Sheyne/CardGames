@@ -1,5 +1,14 @@
-use card_games_lib::Error;
-use tysiac::{Game, SomeState, State, StateError, StateInput};
+use tysiac::{Game, Player, SomeState, State, StateError, StateInput};
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum Error {
+    Game(card_games_lib::Error<StateError, State>),
+    NoState,
+    IncorrectPlayer {
+        current: Player,
+        attempted: Option<Player>,
+    },
+}
 
 pub struct Tysiac {
     game: Game,
@@ -7,41 +16,29 @@ pub struct Tysiac {
 }
 
 impl Tysiac {
-    pub fn feed(
-        &mut self,
-        _player: usize,
-        packet: StateInput,
-    ) -> Result<(), Error<StateError, State>> {
+    pub fn feed(&mut self, player: usize, packet: StateInput) -> Result<(), Error> {
         if let Some(state) = self.state.take() {
+            let next_player = state.next_player();
+            if next_player.index() != player {
+                self.state = Some(state);
+
+                return Err(Error::IncorrectPlayer {
+                    current: next_player,
+                    attempted: Player::from_index(player),
+                });
+            }
+
             let (state, error) = state.step(&mut self.game, packet);
 
             dbg!(state.state());
 
             self.state = Some(state);
-            error
+            error.map_err(|x| Error::Game(x))
         } else {
-            Ok(())
+            Err(Error::NoState)
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use rand::thread_rng;
-    use tysiac::{Bidding, Fives};
-
-    #[test]
-    fn it_works() -> Result<(), Error<StateError, State>> {
-        let mut game = Tysiac {
-            game: Game,
-            state: Some(SomeState::Bidding(Bidding::random(&mut thread_rng()))),
-        };
-
-        game.feed(0, StateInput::Bidding(None))?;
-        game.feed(0, StateInput::Bidding(None))?;
-        game.feed(0, StateInput::AdjustingBid(Fives::zero()))?;
-
-        Ok(())
-    }
-}
+mod tests;

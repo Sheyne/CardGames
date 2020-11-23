@@ -1,4 +1,5 @@
 mod states;
+
 pub use states::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -43,12 +44,24 @@ impl Card {
 
 #[macro_export]
 macro_rules! pile_extract {
+    (@vec_to_tuple_xs $vec:ident ; $($accum:expr),* , ; ) => {
+        ($($accum),*)
+    };
+    (@vec_to_tuple_xs $vec:ident ; $($accum:expr,)* ; $fst:expr, $($rest:expr,)* ) => {
+        pile_extract!(@vec_to_tuple_xs $vec ; $($accum,)* $vec.remove(0), ; $($rest,)* )
+    };
+
+
     ($pile:expr, $($x:expr),+ $(,)?) => {
         {
             let pile = $pile;
 
-            if ($(pile.contains($x))&&+) {
-                Some(($(pile.remove($x).expect("Just checked it is contained")),+))
+            let extracted = pile.extract(vec![$($x),+].into_iter());
+
+            if let Some(mut extracted) = extracted {
+                Some((
+                    pile_extract!(@vec_to_tuple_xs extracted ; ; $($x,)+)
+                ))
             } else {
                 None
             }
@@ -93,6 +106,30 @@ impl<T> Pile<T> {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn extract<D>(&mut self, descriptions: impl Iterator<Item = D>) -> Option<Vec<T>>
+    where
+        D: PartialEq<T>,
+    {
+        let mut taken = std::collections::BTreeSet::new();
+
+        for desc in descriptions {
+            if let Some(idx) = self
+                .0
+                .iter()
+                .enumerate()
+                .filter(|(idx, c)| !taken.contains(idx) && desc == **c)
+                .map(|(idx, _)| idx)
+                .next()
+            {
+                taken.insert(idx);
+            } else {
+                return None;
+            }
+        }
+
+        Some(taken.iter().rev().map(|idx| self.0.remove(*idx)).collect())
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {

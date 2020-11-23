@@ -7,7 +7,33 @@ use std::convert::TryInto;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-pub struct Game;
+pub struct Game {
+    points: [isize; 3],
+}
+
+impl Default for Game {
+    fn default() -> Game {
+        Game { points: [0; 3] }
+    }
+}
+
+impl Game {
+    fn add_points(&mut self, player: Player, num: isize, is_bidder: bool) {
+        let points = &mut self.points[player.index()];
+        *points += num;
+        if *points > 880 {
+            if is_bidder && *points > 1000 {
+                *points = 1000;
+            } else {
+                *points = 880;
+            }
+        }
+    }
+
+    pub fn points(&self, player: Player) -> isize {
+        self.points[player.index()]
+    }
+}
 
 #[derive(EnumIter, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Player {
@@ -32,6 +58,16 @@ impl SomeState {
         R: Rng,
     {
         SomeState::Bidding(Bidding::random(rng))
+    }
+
+    pub fn next_player(&self) -> Player {
+        match self {
+            SomeState::Bidding(x) => x.current_bid.2,
+            SomeState::AdjustingBid(x) => x.bid_winner,
+            SomeState::Distrubuting(x) => x.bid_winner,
+            SomeState::Playing(x) => x.player,
+            SomeState::Finished(_) => Player::A,
+        }
     }
 
     pub fn deal(deck: &mut impl Iterator<Item = Card>) -> Self {
@@ -62,6 +98,12 @@ impl Bidding {
                 deck.next().unwrap(),
             ],
         }
+    }
+}
+
+impl Distrubuting {
+    pub fn hand(&self, player: &Player) -> &Pile<Card> {
+        self.hands.hand(player)
     }
 }
 
@@ -126,7 +168,7 @@ impl Card {
 }
 
 impl Suit {
-    pub fn marriage_value(&self) -> usize {
+    pub fn marriage_value(&self) -> u8 {
         match self {
             Suit::Hearts => 100,
             Suit::Diamonds => 80,
@@ -146,6 +188,17 @@ impl Suit {
 }
 
 impl Rank {
+    pub fn point_value(&self) -> u8 {
+        match self {
+            Rank::Ace => 11,
+            Rank::Ten => 10,
+            Rank::King => 4,
+            Rank::Queen => 3,
+            Rank::Jack => 2,
+            Rank::Nine => 0,
+        }
+    }
+
     pub fn is_weddable(&self) -> bool {
         self == &Rank::King || self == &Rank::Queen
     }
@@ -330,7 +383,7 @@ game_states! {
             bid: usize
         } (next: card_games_lib::Card, prev: card_games_lib::Card) -> ( Playing, String ) |mut this, _context, card_for_next, card_for_prev| {
             let (card_for_next, card_for_prev) = step_try!(
-                pile_extract!(this.hands.hand_mut(&this.bid_winner), &card_for_next, &card_for_prev)
+                pile_extract!(this.hands.hand_mut(&this.bid_winner), card_for_next, card_for_prev)
                 , this, "Trying to pass a card you don't have".to_owned());
 
             let next_player = this.bid_winner.next();
@@ -344,8 +397,8 @@ game_states! {
                 hands: this.hands,
                 trump: None,
                 play_area: pile![],
-                next_player: this.bid_winner,
-                pending_points: [0,0,0],
+                player: this.bid_winner,
+                pending_points: 0,
                 taken: Piles::empty(),
                 bid: this.bid,
             })
@@ -354,12 +407,14 @@ game_states! {
             bid_winner: Player,
             hands: Piles,
             taken: Piles,
-            next_player: Player,
+            player: Player,
             trump: Option<Suit>,
             play_area: Pile<Card>,
-            pending_points: [usize; 3],
+            pending_points: isize,
             bid: usize
-        } (player: Player, card: card_games_lib::Card) -> ( Finished, String ) |mut this, _context, player, card| {
+        } (card: card_games_lib::Card) -> ( Finished, String ) |mut this, context, card| {
+            let player = this.player;
+
             if let Some(initial_card) = this.play_area.get(0) {
                 if initial_card.suit() != card.suit() {
                     let players_hand = this.hands.hand(&player);
@@ -375,7 +430,7 @@ game_states! {
 
             let played_card = step_try!(this.hands.hand_mut(&player).remove(&card), this, format!("{:?} is not in hand", card));
             let mut play_area = this.play_area;
-            let mut next_player = this.next_player.next();
+            let mut next_player = player.next();
             let mut trump = this.trump;
             let mut pending_points = this.pending_points;
 
@@ -383,11 +438,18 @@ game_states! {
                 let has_marriage = this.hands.hand(&player).iter().any(|c| c.suit() == played_card.suit() && c.rank().is_weddable());
                 if has_marriage {
                     trump = Some(played_card.suit().clone());
-                    pending_points[player.index()] += played_card.suit().marriage_value();
+
+                    if this.bid_winner != player {
+                        context.add_points(player, played_card.suit().marriage_value().into(), false);
+                    } else {
+                        pending_points += isize::from(played_card.suit().marriage_value());
+                    }
                 }
             }
 
             play_area.add(played_card);
+
+            let mut game_over = false;
 
             if play_area.len() == 3 {
                 let lead_suit = play_area.get(0).expect("There is at least 1 card").suit();
@@ -408,26 +470,54 @@ game_states! {
                 next_player = winner;
 
                 this.taken.hand_mut(&winner).extend(play_area.drain());
+
+                game_over = this.hands.hand(&Player::A).len() == 0;
             }
 
-            StepResult::stay(Playing {
-                bid_winner: this.bid_winner,
-                hands: this.hands,
-                trump: trump,
-                pending_points: pending_points,
-                next_player: next_player,
-                play_area: play_area,
-                taken: this.taken,
-                bid: this.bid,
-            })
+            if !game_over {
+                StepResult::stay(Playing {
+                    bid_winner: this.bid_winner,
+                    hands: this.hands,
+                    trump: trump,
+                    pending_points: pending_points,
+                    player: next_player,
+                    play_area: play_area,
+                    taken: this.taken,
+                    bid: this.bid,
+                })
+            } else {
+                for player in Player::iter() {
+                    let taken = this.taken.hand(&player);
+                    let score = taken.iter().map(|c| isize::from(c.rank().point_value())).sum();
+
+                    if player == this.bid_winner {
+                        let bid : isize = this.bid.try_into().unwrap();
+
+                        let delta = if score + pending_points < bid {
+                            - bid
+                        } else {
+                            bid
+                        };
+
+                        context.add_points(player, delta, true);
+                    } else {
+                        context.add_points(player, score, false);
+                    }
+                }
+
+                StepResult::cont(Finished {
+                    bid_winner: this.bid_winner,
+                    taken: this.taken,
+                    bid: this.bid,
+                })
+            }
         },
         Finished {
             bid_winner: Player,
             taken: Piles,
-            pending_points: [usize; 3],
             bid: usize
-        } () -> ( Bidding, String ) |_this, _context| {
-            todo!()
+        } () -> (Finished, String) |this, _context| {
+            StepResult::stay(this)
         }
     }
 }
