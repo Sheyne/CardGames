@@ -2,6 +2,7 @@
 
 members = [
     "card-games-lib",
+    "ranged",
     "tysiac-engine",
-    "tysiac"
+    "tysiac",
 ]
