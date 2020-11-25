@@ -6,6 +6,7 @@ use rand::{seq::SliceRandom, Rng};
 use std::convert::TryInto;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
+use ranged_num::define_ranged_enum;
 
 pub struct Game {
     points: [isize; 3],
@@ -35,12 +36,7 @@ impl Game {
     }
 }
 
-#[derive(EnumIter, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Player {
-    A,
-    B,
-    C,
-}
+define_ranged_enum!(Player, Derive(EnumIter, Clone, Copy, Debug, PartialEq, Eq), A, B, C);
 
 struct InfinitePlayerIter(Player);
 

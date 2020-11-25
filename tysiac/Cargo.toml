@@ -8,8 +8,9 @@ edition = "2018"
 
 [dependencies]
 card-games-lib = {path = "../card-games-lib"}
+ranged-num = "0.1.0"
 itertools = ""
-strum = ""
-strum_macros = ""
-rand = ""
+strum = "0.20.0"
+strum_macros = "0.20.1"
+rand = "0.7.3"
 either = ""
